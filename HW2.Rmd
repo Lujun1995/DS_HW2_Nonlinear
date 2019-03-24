@@ -1,0 +1,218 @@
+---
+title: "HW2"
+author: "JunLu"
+date: "3/17/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE)
+library(tidyverse)
+library(caret)
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col <- rgb(.2, .4, .2, .5) 
+theme1$plot.symbol$pch <- 16
+theme1$plot.line$col <- rgb(.8, .1, .1, 1) 
+theme1$plot.line$lwd <- 2
+theme1$strip.background$col <- rgb(.0, .2, .6, .2)
+trellis.par.set(theme1)
+library(patchwork)
+library(splines)
+library(gam)
+library(mgcv)
+library(boot)
+```
+
+## Overview
+In this exercise, we build nonlinear models using the concrete compressive strength data set. Concrete is the most important material in civil engineering. The concrete compressive strength is a nonlinear function of age and ingredients. These ingredients include cement, blast furnace slag, fly ash, water, superplasticizer, coarse aggregate, and fine aggregate. The data are in “concrete.csv”. Concrete compressive strength is the response.
+
+## Import the data
+```{r}
+concrete = read_csv("./concrete.csv")
+# matrix of predictors
+x <- model.matrix(CompressiveStrength~.,concrete)[,-1] 
+# vector of response
+y <- concrete$CompressiveStrength
+```
+
+## Set the random seed
+```{r}
+set.seed(223)
+```
+
+## a) Scatter Plots
+Create scatter plots of response vs. predictors using the function featurePlot().
+```{r,fig.height=8, fig.width=8}
+featurePlot(x, y, plot = "scatter", labels = c("","Y"), type = c("p"), layout = c(4, 2))
+```
+From scatter plots of response vs. predictors, we can't see a clear linear relationship between the response and the other predictors (maybe there is one between the response and the cement).
+
+## b) Polynomial Regression
+Perform polynomial regression to predict compressive strength using water as the predictor. For 1 <= d <= 4, use cross-validation to select the optimal degree d for the polynomial. What degree was chosen, and how does this compare to the results of hypothesis testing using ANOVA? Make a plot of different polynomial fits to the data.
+
+### Fit polynomial regression models
+```{r}
+fit1 = lm(CompressiveStrength ~ Water, data = concrete)
+fit2 = lm(CompressiveStrength~poly(Water,2), data = concrete)
+fit3 = lm(CompressiveStrength~poly(Water,3), data = concrete)
+fit4 = lm(CompressiveStrength~poly(Water,4), data = concrete)
+```
+
+### Calculate the 10-fold CV MSE
+```{r}
+ctrl1 <- trainControl(method = "cv", number = 10)
+
+lmfit = function(x){
+    f = bquote(CompressiveStrength~poly(Water, .(x)))
+    train(
+        as.formula(f),
+        data = concrete,
+        method = "lm",
+        trControl = ctrl1
+    )
+}
+
+lm = list()
+
+for (i in 1:4) {
+    lm[[i]] = lmfit(i)
+}
+
+resamp <- resamples(lm) 
+summary(resamp)
+```
+
+According to the 10-fold CV MSE, the model with the degree of 4 has the lowest CV MSE. Thus, thr optimal degree is 4.
+
+### ANOVA Test
+```{r}
+anova(fit1,fit2,fit3,fit4)
+```
+According to ANOVA test, we choose the model with the degree of 4.
+
+### Plots
+
+```{r, fig.height=8, fig.width=8}
+fit = list(fit1, fit2, fit3, fit4)
+
+p_0 = ggplot(data = concrete, 
+            aes(x = Water, y = CompressiveStrength)) + 
+    geom_point(color = rgb(.2, .4, .2, .5))
+
+
+water_range = range(concrete$Water)
+water_grid = data.frame(Water = seq(from = water_range[1], to = water_range[2]))
+
+poly_plot = function(degree){
+    title = paste("Degree of freedom: ", degree)
+    pred = predict(fit[[degree]], newdata = water_grid)
+    df = data.frame(pred = pred,
+                    water = water_grid$Water)
+    p =  p_0 +
+    geom_line(aes(x = water, y = pred),
+              data = df,
+              color = rgb(.8, .1, .1, 1)
+              ) +
+    labs(
+        title = title
+    )
+}
+
+p1 = poly_plot(1)
+p2 = poly_plot(2)
+p3 = poly_plot(3)
+p4 = poly_plot(4)
+p1 + p2 + p3 + p4
+```
+
+## c)
+Fit a smoothing spline using water as the predictor for a range of degrees of freedom, as well as the degree of freedom obtained by generalized cross-validation, and plot the resulting fits. Describe the results obtained.
+
+### The degree of freedom obtained by generalized cv
+```{r}
+gen_smooth = smooth.spline(concrete$Water,concrete$CompressiveStrength)
+
+pred_gen = predict(gen_smooth, x = water_grid$Water)
+
+gen_smooth$df
+
+df_spine_pre = data.frame(water = water_grid$Water,
+                          pred = pred_gen$y)
+p_gen_smooth = p_0 +
+    geom_line(aes(x = water, y = pred),
+              data = df_spine_pre,
+              color = rgb(.8, .1, .1, 1)
+              ) +
+    labs(
+        title = "Degree of freedom: 68.88205 (obtained by generalized cv)"
+    )
+p_gen_smooth
+```
+
+The degree of freedom obtained by generalized cv is 68.88205.
+
+### A range of degrees of freedom
+```{r, fig.height=20, fig.width=15}
+spline = function(degree){
+    title = paste("Degree of freedom: ", degree)
+    spline = smooth.spline(concrete$Water,concrete$CompressiveStrength, df = degree)
+    pred = predict(spline, x = water_grid$Water)
+    df_spine_pre = data.frame(water = water_grid$Water,
+                          pred = pred$y)
+    
+    p = p_0 +
+    geom_line(aes(x = water, y = pred),
+              data = df_spine_pre,
+              color = rgb(.8, .1, .1, 1)
+              ) +
+    labs(
+        title = title
+    )
+}
+
+p = list()
+for (i in 1:15) {
+    p[[i]] = spline(5*i)
+}
+
+p[[1]] + p[[2]] + p[[3]] + p[[4]] + p[[5]] + p[[6]] + p[[7]] + p[[8]] + 
+    p[[9]] + p[[10]] + p[[11]] + p[[12]] + p[[13]] + p[[14]] + p[[15]] + 
+    plot_layout(ncol = 3, nrow = 5)
+```
+
+Describe the results obtained:
+
+The concrete compressive strength is a nonlinear function of water. When we only use water as a predictor and use the degree of freedom obtained by generalized cv to fit the data, the fitted curve can be very shifty.
+
+From the plots we can see that when degree of freedom goes up, the smoothing spline fits the data better. However, when df is too large, it tends to be overfitted.
+
+
+## d)
+Fit a GAM using all the predictors. Plot the results and explain your findings.
+```{r}
+gam.fit = train(x, y,
+                 method = "gam",
+                 tuneGrid = data.frame(method = "GCV.Cp", 
+                                       select = c(TRUE,FALSE)), 
+                 trControl = ctrl1)
+gam.fit$bestTune
+gam.fit$finalModel
+
+gam = gam(CompressiveStrength ~ s(Cement) + s(BlastFurnaceSlag) + s(FlyAsh) +
+                  s(Superplasticizer) + s(CoarseAggregate) + s(FineAggregate) + 
+                  s(Water) + s(Age), data = concrete)
+```
+According to the MSE of CV, we fit every predictor with smoothing spline.
+
+```{r, fig.height=10, fig.width=10}
+par(mfrow = c(3,3))
+plot(gam)
+```
+
+The concrete compressive strength is a nonlinear function of age and ingredients (blast furnace slag, fly ash, water, superplasticizer, coarse aggregate, and fine aggregate), however the concrete compressive strength is likely to be a linear function of cement holding other variable fixed.
+
+* Water: When adding other factors into the model, the curve of the concrete compressive strength vs. water become smooth. Approximately at the range of 120 - 140 of water, the strength increases with more water. At the range of 140 - 200, the strength decreases with more water.
+
