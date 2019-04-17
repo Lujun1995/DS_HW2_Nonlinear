@@ -2,9 +2,7 @@
 title: "HW2"
 author: "JunLu"
 date: "3/17/2019"
-output:
-  pdf_document: default
-  html_document: default
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
